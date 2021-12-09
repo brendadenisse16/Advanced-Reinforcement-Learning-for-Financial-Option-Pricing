@@ -1,0 +1,591 @@
+---
+title: "Project_RL"
+date: "09/12/2020"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+**Definition** An American call(put) option is a contract that gives the holder the right, but not the obligation, to buy (sell) one unit of an asset  at  a prescribed price (called strike price called the strick price at any desired time before a preset expiration time of the contract.
+
+Determining option pricing is a very popular yet challenging topic in modern mathematical finance. One possible approach i through the search for the OptimalStopping Policy, to maximize expected return.
+
+
+
+
+# Simulating 
+We let $S_t$ denote stock price at time $t$. In the \emph{Black Scholes} model $S_t$ is assumed to be a \emph{geometric Brownian motion}.
+We simulate $m$  stock price sample path with $T$ by the classical Brownian motion:
+
+$$
+dS_t=\mu S_tdt+\sigma S_tdW_t
+$$
+
+$$
+S_{t+1}=S_te^{\left( \mu -\frac{1}{2}\sigma^2 \right)\Delta t+\sigma \sqrt{\Delta t}Z}
+$$
+where $Z$ is a standard normal random variable.
+
+
+```{r}
+
+library(pracma)
+
+# episode generation
+s0=65
+K=70 # Strike Price
+r=0.01
+theseed=1992
+
+M=1 #Maturity Time
+n=6 #number of time step
+m=50000 #number of episodes
+
+delta_t=M/n
+sigma=0.15
+DF <- exp(-1 * r * delta_t)
+
+
+### FUNCTION TO GENERATE PATHS 
+generatePaths <- function(s0,m,n,r,sigma,delta_t,theseed){
+  set.seed(theseed)
+  S=matrix(s0, nrow = m,ncol = n+1)
+  RN=matrix(rnorm(m*n),nrow = m, ncol = n)
+  for (t in 2:(n+1)){
+    S[,t]=S[,t-1]*exp((r- 1/2 *sigma**2)*delta_t+sigma*sqrt(delta_t)*RN[,t-1])
+  }
+  return(S)
+}
+
+S=generatePaths(s0,m,n,r,sigma,delta_t,theseed)
+
+```
+
+
+## American Options Pricing
+
+We define the American put option as :
+
+$$
+H_T(S_T)=\max(K-S_T,0)
+$$
+
+
+```{r}
+
+
+payoff=function(s,K1=K){
+  #s the stoch price at time t
+  # K is the trike
+  payoff=max(0,K1-s)
+  return(payoff)
+  }
+
+
+payoff_simulation <- function(stock_paths, K) {
+  payoff_by_step <- matrix(0,
+                           nrow = nrow(stock_paths),
+                           ncol = ncol(stock_paths)
+  )
+  for (t in c(2:ncol(stock_paths))) {
+    payoff_by_step[, t] <-
+      sapply(rep(K, nrow(stock_paths)) - stock_paths[, t],
+             FUN = function(price_diff) max(price_diff, 0)
+      )
+  }
+  return(payoff_by_step)
+}
+
+paths=generatePaths(s0,m,n,r,sigma,delta_t,theseed)
+
+payoffs=payoff_simulation(paths,K)
+
+which.max.tie.last <- function(x){
+  z<-which(x==max(x))
+  return(z[length(z)])
+}
+```
+
+
+## Plots Simulated Stock Prices 
+
+```{r}
+step_size= as.integer(m/10)
+
+idx_plot=seq(step_size,m,step_size)
+
+matplot(t(S)[,idx_plot],type = "l",
+      lwd = 1, 
+     xlab = "Time step", 
+     ylab = "Stock price",
+         main ="10 independent trajectories")
+
+```
+
+# First Method: Watkin Q-learning 
+Function apply_qlearning which applies Watkin's Q-learning        
+methodology to estimate the optimal action-value function q*
+
+```{r}
+#  Watkin Q-learning 
+apply_qlearning <- function(paths,payoffs,alpha,gamm,theseed){
+  set.seed(theseed)
+  # Q rows represent the paths(episodes)
+  # Q columns represents the time steps (0,1,.....,n)
+  Q<-matrix(0,nrow = nrow(paths),ncol = ncol(paths))
+  for(s in c(1:(nrow(paths)-1))){
+    a=which.max.tie.last(payoffs[s,])
+    reward=payoffs[s,a]
+    s_prime=s+1
+    Q[s,a]=Q[s,a]+alpha*(reward+gamm*max(Q[s_prime,])-Q[s,a])
+  }
+  return(Q)
+}
+alpha=0.1
+Qlearning=apply_qlearning(paths,payoffs,alpha,DF,theseed)
+
+get_option_price <- function(Q,n,r){
+  reward_sum=colSums(Q)[2:(n+1)]
+  t=1:n
+  opt_price=sum(reward_sum*exp(-r*t))/m
+  #opt_price=sum(reward_sum)/m
+  return(opt_price)
+}
+```
+# Second Method:  Double Q-Learning 
+
+```{r}
+apply_double_qlearing <- function(paths,payoffs,alpha,epsilon,gamm,theseed){
+  set.seed(theseed)
+  # Initialize Q-table
+  Q1=matrix(0,nrow = nrow(paths),ncol = ncol(paths))
+  Q2=Q1
+  for(s in c(1:(nrow(paths)-1))){
+    # we use the epsilon-greedy approach to select an action
+    if((runif(1) < 1 - epsilon)){
+      a=which.max.tie.last(Q1[s,]+Q2[s,])
+    } else {
+      a=sample(2:ncol(paths),1)
+    }
+    reward=payoffs[s,a]
+    # we use a greedy approach to select an action
+    s_prime=s+1
+    if(runif(1) < 0.5){
+      max_a=which.max(Q1[s,])
+      Q1[s,a]=Q1[s,a]+alpha*(reward+gamm*Q2[s_prime,max_a]-Q1[s,a])
+    } else{
+      max_a=which.max(Q2[s,])
+      Q2[s,a]=Q2[s,a]+alpha*(reward+gamm*Q1[s_prime,max_a]-Q2[s,a])
+    }
+  }
+  return(list(Q1, Q2))
+}
+epsilon=0.1
+result=apply_double_qlearing(paths,payoffs,alpha,epsilon,DF,theseed)
+DoubleQlearning=result[[1]]+result[[2]]
+
+
+```
+
+# Third Method: Review of Least Square Policy Iteration (LSPI)
+
+The LSPI Algorithm performs a Least Square Temporal Difference (LSTD) for each batch of episodes.
+
+*
+LSTD(for a fixed policy $\pi$ in a batch) builds matrix $A$ and vector $b$
+
+*
+$x(.,.)$ is  a set of feature functions of state and action
+
+* 
+Update of A at each time step is 
+
+$$
+x(s,a)\cdot(x,a)-\gamma\cdot x(s',\pi(s')))^T
+$$
+
+* Update for $b$ at each time step is 
+$$ r\cdot x(s,a$$
+
+*
+Sample(s,a,r,s') is randomly picked from stored past experiences 
+
+*
+At the end of batch:
+
+**
+Solve the linear system $Aw=b$
+
+**
+Update linear-approx Action-Value Function 
+$$
+Q(s,a;w)=w^T \cdot x(s,a)
+$$
+**
+Improve policy as  
+$$\pi'(s) =\mbox{argmax}_aQ(s,a;w)$$
+
+## Feature/Basis Functions
+Li et al recommend the firt three ofLaguerre polynomials. They  recommended the follwing function for generalization over time.
+
+We let $S'=S_t/K$ where $S_t$ is the underlying price and $K$ is the strike price.
+
+$$
+\phi_0(S,t)= \phi_0(S')=1
+$$
+
+$$
+\phi_1(S,t)=\phi_1(S')=\exp\left( -\frac{S'}{2} \right)
+$$
+$$
+\phi_2(S,t)=\phi_2(S')=\exp\left( -\frac{S'}{2} \right)\cdot(1-S')
+$$
+
+$$
+\phi_3(S,t)=\phi_3(S')=\exp\left( -\frac{S'}{2} \right)\cdot(1-2S'+S'^2/2)
+$$
+
+
+$$
+\phi_4(S,t)=\phi_0^t(t)=\sin\left(\frac{\pi(T-t)}{2T}\right)
+$$
+
+
+$$
+\phi_5(S,t)=\phi_1^t(t)=\log(T-t)
+$$
+
+
+
+$$
+\phi_6(S,t)=\phi_2^t(t)=\left(\frac{t}{T} \right)^2
+$$
+LSPI and FQI uses 7 basis function i.e. 7 weights which also corresponds with the number of timestep $T$. In our case $T=6$
+
+They claimed that LSPI and FQI perform better  than Longtaff-Schwartz with this choice of features.
+
+
+
+
+```{r}
+Phi=function(St,t,K1=K,Tj=7){
+   S=St/K1
+return(rbind(1, exp(-S/2), exp(-S/2)*(1-S),
+             exp(-S/2)*(1-(2*S)+(S^2)/2) ,sin((pi*t)/(2*Tj)+(pi/2)),
+             log(Tj-t),(t/Tj)^2))
+}
+```
+
+
+```{r}
+LSPI=function(S,gamm,r,K){
+  
+  batch=100
+  m=dim(S)[1]
+  n=dim(S)[2]-1
+  
+  action=matrix(0,nrow = dim(S)[1],ncol = n+1)
+  reward=matrix(0,nrow=dim(S)[1], ncol= n+1)
+  A=matrix(0, nrow = n+1,ncol = n+1)
+  B=w=matrix(0,nrow = n+1,ncol = 1)
+  for(i in 1:m){
+    j=1
+    stop=FALSE
+    while (stop== FALSE) {
+      Q=payoff(S[i,j+1])
+      if((j<n) && (Q<=(t(w)%*% Phi(S[i,j+1],j+1,K,n+1) ))){
+        P=Phi(S[i,j+1],j+1,K,n+1)
+      }else{
+        P=matrix(0,nrow = n+1,ncol = 1)
+      }
+      if(Q>(t(w)%*%P)){
+        R=Q
+        action[i,j+1]=1
+        reward[i,j+1]=R
+      }else{
+        R=0
+      }
+      A=A+Phi(S[i,j],j,K,n+1)%*%t(Phi(S[i,j],j,K,n+1)-gamm*P)
+      B <- B+gamm * R * Phi(S[i,j],j,K,n+1)
+      j=j+1
+      
+      if((R>0)||(j>n)){
+        stop=TRUE
+        break
+      }
+    }
+    w= solve(diag(n+1) - A) %*% B
+    if(((i+1)%%batch)==0){
+      A=matrix(0, nrow = n+1,ncol = n+1)
+      B=w=matrix(0,nrow = n+1,ncol = 1)
+    }
+  }
+  reward_sum=colSums(reward)[2:(n+1)]
+  t=1:n
+  opt_price=sum(reward_sum*exp(-r*t))/m
+  return(opt_price)
+}
+# LSPI(paths,DF,r,K)
+```
+
+# Fourth Method: Fitted Q-Iteration for American Options Pricing
+```{r}
+FQI=function(S,gamm,r,K){
+  batch=100
+  m=dim(S)[1]
+  n=dim(S)[2]-1
+  action=matrix(0,nrow = dim(S)[1],ncol = n+1)
+  reward=matrix(0,nrow=dim(S)[1], ncol= n+1)
+  A=matrix(0, nrow = n+1,ncol = n+1)
+  B=w=matrix(0,nrow = n+1,ncol = 1)
+  for(i in 1:m){
+    j=1
+    stop=FALSE
+    while (stop== FALSE) {
+      Q=payoff(S[i,j+1])
+      if(j<n){
+        P=Phi(S[i,j+1],j+1,K,n+1)
+      }else{
+        P=matrix(0,nrow = n+1,ncol = 1)
+      }
+      if(Q>(t(w)%*%P)){
+        R=Q
+        action[i,j+1]=1
+        reward[i,j+1]=R
+      }else{
+        R=0
+      }
+      A=A+Phi(S[i,j],j,K,n+1)%*%t(Phi(S[i,j],j,K,n+1))
+      B=B+gamm*max(Q,t(w)%*%P)*Phi(S[i,j],j,K,n+1)
+      j=j+1
+      
+      if((R>0)||(j>n)){
+        stop=TRUE
+        #break
+      }
+    }
+  }
+  w= solve(diag(n+1) - A) %*% B
+  if(((i+1)%%batch)==0){
+    A=matrix(0, nrow = n+1,ncol = n+1)
+    B=w=matrix(0,nrow = n+1,ncol = 1)
+  }
+  reward_sum=colSums(reward)[2:(n+1)]
+  t=1:n
+  opt_price=sum(reward_sum*exp(-r*t))/m
+  return(opt_price)
+}
+
+
+```
+
+
+# Results Evaluation
+
+We use 3 metrics to evaluate performance. 
+
+1. Comparison of approximated American put option from RL Models
+
+```{r}
+# 1. Comparison of approximated American put option from RL Models
+
+exec_test_round=function(s0,m,n,r,sigma,delta_t,theseed,alpha,epsilon,K,gamm){
+  results=matrix(0,nrow=4,ncol=3)
+  colnames(results)=c("Method","Exec Time","Option Value")
+  results[,1]=c("QLearning","Double QLearning","LSPI","FQI")
+  paths=generatePaths(s0,m,n,r,sigma,delta_t,theseed)
+  payoffs=payoff_simulation(paths,K)
+  # Model 1: QLearning Approach
+  start.time <- Sys.time()
+  Qlearning=apply_qlearning(paths,payoffs,alpha,gamm,theseed)
+  results[1,2]<- (Sys.time()-start.time)[[1]]
+  results[1,3]=get_option_price(Qlearning,n,r)
+  # Model 2: Double QLearning  Approach
+  start.time <- Sys.time()
+  dql=apply_double_qlearing(paths,payoffs,alpha,epsilon,gamm,theseed)
+  results[2,2]<- (Sys.time()-start.time)[[1]]
+  results[2,3]=get_option_price((dql[[1]]+dql[[2]]),n,r)
+  # Model 3: LSPI  Approach
+  start.time <- Sys.time()
+  results[3,3]=LSPI(paths, gamm, r, K)
+  results[3,2]<- (Sys.time()-start.time)[[1]]
+  # Model 4: FQI Approach
+  start.time <- Sys.time()
+  results[4,3]=FQI(paths, gamm, r, K)
+  results[4,2]<- (Sys.time()-start.time)[[1]]
+  return(results)
+}
+
+s0=65 # Initial Price
+K=70 # Strike Price
+theseed=1992
+M=1 #Maturity Time
+m=50000
+n=6
+delta_t=M/n
+epsilon=0.1
+rs=c(0.01,0.1) # risk free index
+sigmas=c(0.15,0.35) # volatility
+alphas=c(0.01,0.1)
+DFs=exp(-1 * rs * delta_t)
+
+for(x in 1:length(rs)){
+  for(y in 1:length(sigmas)){
+    for(z in 1:length(alphas)){
+      print(paste("r:",rs[x],", sigma:",sigmas[y],", alpha: ",alphas[z]))
+      print(exec_test_round(s0,m,n,rs[x],sigmas[y],delta_t,theseed,alphas[z],epsilon,K,DFs[x]))
+    }
+  }
+}
+
+
+
+
+```
+
+
+# 2. Comparison of average Estimate optimal action value
+
+```{r}
+m=10000
+n=24
+paths=generatePaths(s0,m,n,r,sigma,delta_t,theseed)
+payoffs=payoff_simulation(paths,K)
+# Model 1: QLearning Approach  
+QL=apply_qlearning(paths,payoffs,alpha,DF,theseed)
+# Model 2: Double QLearning  Approach
+result=apply_double_qlearing(paths,payoffs,alpha,epsilon,DF,theseed)
+DQL=result[[1]]+result[[2]]
+AVG_QestmOpt=rbind(
+  apply(QL[,2:ncol(QL)],2,function(x) (sum(x)/sum(x>0))),
+  apply(DQL[,2:ncol(DQL)],2,function(x) (sum(x)/sum(x>0)))
+)
+
+
+plot(AVG_QestmOpt[1, ], 
+     type = "l", 
+     col = "blue", 
+     lwd = 1, 
+     xlab = "Time step", 
+     ylab = "",
+     ylim = c(min(c(AVG_QestmOpt[1, ],AVG_QestmOpt[2, ])), max(c(AVG_QestmOpt[ 1, ],AVG_QestmOpt[ 2, ]))),
+     main ="Average Estimate Optimal Action Value" )
+lines(AVG_QestmOpt[2, ], col = "green", lwd = 1)
+legend("topleft", 
+       legend = c(expression("Q-Learning"),
+                  expression("Double Q-Learning")), 
+       col = c("blue", "green"),
+       lty = c(1, 1), 
+       lwd = 1, 
+       cex = 1, 
+       bty = "n" ,y.intersp = 1.2,seg.len = 0.75
+)
+
+
+```
+
+
+#3. Benchmarking executing time with  different RL Models applied
+```{r}
+
+options(digits.secs = 6)
+s0=65 # Initial Price
+K=70 # Strike Price
+r=0.01 # risk free index
+theseed=1992
+M=1 #Maturity Time
+delta_t=M/n
+sigma=0.15 # volatility
+DF <- exp(-1 * r * delta_t) # discount factor
+
+## Benchmarking executing time with  different simulated paths
+path_counts=c(100,200,300,400,500,600,800,900,1000,5000)
+n=6
+steps_benchmark=matrix(NA,nrow=length(path_counts),ncol=5)
+colnames(steps_benchmark)=c("paths count","QLearning","Double QLearning","LSPI","FQI")
+for(m in 1:length(path_counts)){
+  steps_benchmark[m,1]=path_counts[m]
+  steps_benchmark[m,2:ncol(steps_benchmark)]=t(exec_test_round(s0,path_counts[m],n,r,sigma,delta_t,theseed,alpha,epsilon,K,DF))[2,]
+  
+}
+steps_benchmark
+
+```
+
+
+5.Some Plots
+
+```{r}
+s0=65 #initial stock price
+K=55 # Strike Price
+r=c(0.01,0.1) # risk-free rate
+#mu=0.03 #drift
+sigma=c(0.15,0.35) #volatility
+M=1 #Maturity Time
+n=1000 #number of time step
+m=10000 #Monte-Carlo Path
+
+set.seed(1992)
+delta_t=M/n  # the time interval
+DF=exp(-r*delta_t) #Discount Factor
+
+# We generate  Standard normal Random numbers
+RN=matrix(rnorm(m*n),nrow = m, ncol = n)
+
+S=matrix(s0,nrow = 4,ncol = n+1)
+
+for (t in 2:(n+1)){
+  S[1,t]=S[1,t-1]*exp((r[1]- 1/2 *sigma[1]**2)*delta_t+sigma[1]*sqrt(delta_t)*RN[1,t-1])
+  S[2,t]=S[2,t-1]*exp((r[1]- 1/2 *sigma[2]**2)*delta_t+sigma[2]*sqrt(delta_t)*RN[1,t-1])
+  S[3,t]=S[3,t-1]*exp((r[2]- 1/2 *sigma[1]**2)*delta_t+sigma[1]*sqrt(delta_t)*RN[1,t-1])
+  S[4,t]=S[4,t-1]*exp((r[2]- 1/2 *sigma[2]**2)*delta_t+sigma[2]*sqrt(delta_t)*RN[1,t-1])
+}
+
+```
+
+## Plots
+
+```{r}
+plot(S[ 1, ], 
+     type = "l", 
+     col = "blue", 
+     lwd = 1, 
+     xlab = "Time step", 
+     ylab = "",
+     ylim = c(min(c(S[ 1, ],S[ 2, ])), max(c(S[ 1, ],S[ 2, ]))),
+     main = "Different Sigma at r=0.01")
+lines(S[ 2, ], col = "green", lwd = 1)
+legend("topleft", 
+       legend = c(expression(paste(sigma , " = ",  0.15)),
+                  expression(paste(sigma , " = ",  0.35))), 
+       col = c("blue", "green"),
+       lty = c(1, 1, 1, 2), 
+       lwd = 1, 
+       cex = 1, 
+       bty = "n" ,y.intersp = 1.2,seg.len = 0.75
+       )
+
+```
+```{r}
+
+plot(S[ 1, ], 
+     type = "l", 
+     col = "blue", 
+     lwd = 1, 
+     xlab = "Time step", 
+     ylab = "",
+     ylim = c(min(c(S[ 1, ],S[ 3, ])), max(c(S[ 1, ],S[ 3, ]))),
+     main ="Different r at sigma= 0.15" )
+lines(S[ 3, ], col = "green", lwd = 1)
+legend("topleft", 
+       legend = c(expression(paste(r , " = ",  0.01)),
+                  expression(paste(r , " = ",  0.1))), 
+       col = c("blue", "green"),
+       lty = c(1, 1), 
+       lwd = 1, 
+       cex = 1, 
+       bty = "n" ,y.intersp = 1.2,seg.len = 0.75
+       )
+
+```
+
