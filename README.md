@@ -1,12 +1,38 @@
-# Reinforcement-Learning 
+# Reinforcement Learning for American Options Pricing
 
-MAST 679H Reinforcement Learning Course - Term Project (Fall 2020)
+## Overview
+This project implements various Reinforcement Learning (RL) algorithms to estimate the price of American options. Specifically, we use techniques like Q-learning, Double Q-learning, Least-Squares Policy Iteration (LSPI), and Fitted Q Iteration (FQI) to solve the Optimal Stopping Problem, a challenging task in financial mathematics.
 
-Professor: Dr. Frédéric Godin
+American options are a type of financial contract that gives the holder the right, but not the obligation, to buy or sell an asset at a strike price before the contract expires. This project focuses on developing RL-based methods for pricing American call and put options under the Black-Scholes model.
 
-Title: Pricing American Option
+## Methods
+The following RL algorithms are applied to estimate option prices:
+1. **Q-Learning**: A reinforcement learning algorithm that estimates the optimal action-value function by iteratively updating a Q-table.
+2. **Double Q-Learning**: A variant of Q-learning that reduces the overestimation bias by maintaining two Q-tables.
+3. **Least-Squares Policy Iteration (LSPI)**: A batch reinforcement learning algorithm that uses least-squares temporal difference learning.
+4. **Fitted Q Iteration (FQI)**: A model-free algorithm for solving control problems using function approximation.
 
-Derivative securities are important financial instruments that allow investors to create better portfolios. Among these are the American Option, whose pricing is a fascinating
-application area for reinforcement learning (RL). In this project, I applied the following RL methods: an off-Policy TD Control method known as Watkin's Q-learning, a Double Q-learning method to estimate the optimal action-value function,a fitted Q-Learning approach and a Least-Squares Policy Iteration (LSPI) method. The fitted Q-Learning and the LSPI are based in part on the Longstaff-Schwartz Algorithm. The respective performances of these methods will be evaluated on simulated data.
+## Black-Scholes Model
+The stock price $S_t$ is modeled using a Geometric Brownian Motion under the Black-Scholes framework:
 
-The code was made in R Studio, and each applied method was made from scratch.
+$$
+dS_t = \mu S_t dt + \sigma S_t dW_t
+$$
+
+Where:
+- $\mu$ is the drift (expected return rate)
+- $\sigma$ is the volatility
+- $W_t$ is a standard Wiener process
+
+The aim is to simulate stock prices and apply RL techniques to determine the optimal stopping time for exercising the option.
+
+## Project Structure
+- **/main.Rmd**: RMarkdown file containing all the simulations, RL implementations, and plots.
+
+## Setup and Installation
+To run this project, follow the steps below:
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/brendadenisse16/Reinforcement-Learning.git
+
